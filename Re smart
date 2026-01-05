@@ -1,0 +1,337 @@
+--[[ 
+AUTO QUEST SMART'S ALLIANCE + AUTO KILL 3 BOSS
+Alur:
+1. Warp ke koordinat SmartUncle
+2. Klik SmartUncle + ambil quest
+3. Magnet & kill berurutan:
+   - Fyze Lv.80
+   - Kyza Lv.80
+   - Raging Steed Lv.80
+Combo: Heavy -> Skill E -> Heavy -> Basic -> Skill R (loop sampai musuh mati)
+4. Balik ke SmartUncle, turn-in quest
+5. Loop terus
+]]
+
+--=====================================================
+-- SERVICES & PLAYER
+--=====================================================
+local Players            = game:GetService("Players")
+local ReplicatedStorage  = game:GetService("ReplicatedStorage")
+local RunService         = game:GetService("RunService")
+local player             = Players.LocalPlayer
+
+--=====================================================
+-- KONFIGURASI
+--=====================================================
+
+-- Koordinat warp ke SmartUncle (dari koordinat yang kamu kirim)
+local WARP_POS = Vector3.new(797.3087158203125, 9.958056449890137, -837.666259765625)
+
+-- Path penting (SESUAIKAN kalau beda di Explorer)
+local SmartUncleClick = workspace.NPC.SmartUncle.ClickDetector
+local DialogueRemote  = ReplicatedStorage.Remote.Event.Dialogue
+
+local livesFolder = workspace:WaitForChild("Lives")
+
+-- Urutan nama boss
+local TARGET_NAMES = {
+    "Fyze Lv.80",
+    "Kyza Lv.80",
+    "Raging Steed Lv.80"
+}
+
+-- Jarak magnet ke musuh (stud)
+local MAGNET_DIST = 5
+
+-- Delay antar serangan (bisa diatur)
+local ATK_DELAY  = 0.3
+local LOOP_DELAY = 0.5
+
+--=====================================================
+-- GUI SETUP
+--=====================================================
+local ScreenGui = Instance.new("ScreenGui")
+local Frame = Instance.new("Frame")
+local ToggleButton = Instance.new("TextButton")
+local StatusLabel = Instance.new("TextLabel")
+
+ScreenGui.Name = "AutoSmartGUI"
+ScreenGui.Parent = player:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false
+
+Frame.Parent = ScreenGui
+Frame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+Frame.BorderSizePixel = 0
+Frame.Position = UDim2.new(0, 10, 0, 10)
+Frame.Size = UDim2.new(0, 200, 0, 80)
+Frame.Active = true
+Frame.Draggable = true
+
+Frame.CornerRadius = UDim.new(0, 8)
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = Frame
+
+ToggleButton.Parent = Frame
+ToggleButton.BackgroundColor3 = Color3.fromRGB(220, 53, 69)
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Position = UDim2.new(0.1, 0, 0.3, 0)
+ToggleButton.Size = UDim2.new(0.8, 0, 0.3, 0)
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.Text = "OFF"
+ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleButton.TextScaled = true
+
+local ButtonCorner = Instance.new("UICorner")
+ButtonCorner.CornerRadius = UDim.new(0, 6)
+ButtonCorner.Parent = ToggleButton
+
+StatusLabel.Parent = Frame
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Position = UDim2.new(0, 0, 0, 0)
+StatusLabel.Size = UDim2.new(1, 0, 0.3, 0)
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.Text = "AUTO SMART'S ALLIANCE"
+StatusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+StatusLabel.TextScaled = true
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+--=====================================================
+-- STATE MANAGEMENT
+--=====================================================
+local running = false
+local mainLoop = nil
+
+--=====================================================
+-- FUNGSI UTILITAS
+--=====================================================
+
+local function getCharacter()
+    local char = player.Character or player.CharacterAdded:Wait()
+    char:WaitForChild("HumanoidRootPart")
+    char:WaitForChild("Humanoid")
+    return char
+end
+
+local function warpToPos(pos)
+    local char = getCharacter()
+    local hrp  = char.HumanoidRootPart
+    hrp.CFrame = CFrame.new(pos)
+end
+
+local function isTargetAlive(model)
+    if not model or not model.Parent then return false end
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if hum and hum.Health > 0 then
+        return true
+    end
+    return false
+end
+
+local function getTargetByName(name)
+    local model = livesFolder:FindFirstChild(name)
+    if model and model:FindFirstChild("HumanoidRootPart") then
+        return model
+    end
+    return nil
+end
+
+local function magnetToTarget(model)
+    local char = getCharacter()
+    local hrp  = char.HumanoidRootPart
+    local targetRoot = model:FindFirstChild("HumanoidRootPart")
+    if not targetRoot then return end
+
+    local targetPos = targetRoot.Position + (targetRoot.CFrame.LookVector * -MAGNET_DIST)
+    hrp.CFrame = CFrame.new(targetPos, targetRoot.Position)
+end
+
+--=====================================================
+-- FUNGSI QUEST (CLICK + DIALOGUE)
+--=====================================================
+
+local function clickSmartUncle()
+    pcall(function()
+        fireclickdetector(SmartUncleClick)
+    end)
+end
+
+local function startQuest()
+    local args = {
+        {
+            Choice = "Start 'Smart's Alliance'"
+        }
+    }
+    DialogueRemote:FireServer(unpack(args))
+end
+
+local function finishQuest()
+    local args = {
+        {
+            Choice = "Yes, I've completed it."
+        }
+    }
+    DialogueRemote:FireServer(unpack(args))
+end
+
+--=====================================================
+-- FUNGSI SERANGAN
+--=====================================================
+
+local function fireHandler(argsTbl)
+    local char = getCharacter()
+    local handler = char:WaitForChild("PlayerHandler"):WaitForChild("HandlerEvent")
+    handler:FireServer(unpack(argsTbl))
+end
+
+local function heavyAttack()
+    local args = {
+        {
+            CombatAction = true,
+            AttackType   = "Down",
+            HeavyAttack  = true,
+            MouseData    = CFrame.new(952.8143310546875, 9.958056449890137, -782.230224609375, 1,0,0,0,1,0,0,0,1)
+        }
+    }
+    fireHandler(args)
+end
+
+local function skillE()
+    local args = {
+        {
+            Skill      = true,
+            AttackType = "Down",
+            Key        = "E",
+            MouseData  = CFrame.new(897.6565551757812, 9.958056449890137, -819.73095703125, 1,0,0,0,1,0,0,0,1)
+        }
+    }
+    fireHandler(args)
+end
+
+local function skillR()
+    local args = {
+        {
+            Skill      = true,
+            AttackType = "Down",
+            Key        = "R",
+            MouseData  = CFrame.new(864.8584594726562, 9.983565330505371, -801.572509765625, 1,0,0,0,1,0,0,0,1)
+        }
+    }
+    fireHandler(args)
+end
+
+local function basicAttack()
+    local args = {
+        {
+            CombatAction = true,
+            LightAttack  = true,
+            MouseData    = CFrame.new(835.795654296875, 9.983271598815918, -785.448974609375, 1,0,0,0,1,0,0,0,1)
+        }
+    }
+    fireHandler(args)
+end
+
+local function attackComboOnTarget(targetModel)
+    while isTargetAlive(targetModel) and running do
+        magnetToTarget(targetModel)
+
+        heavyAttack()
+        task.wait(ATK_DELAY)
+
+        skillE()
+        task.wait(ATK_DELAY)
+
+        heavyAttack()
+        task.wait(ATK_DELAY)
+
+        basicAttack()
+        task.wait(ATK_DELAY)
+
+        skillR()
+        task.wait(LOOP_DELAY)
+    end
+end
+
+--=====================================================
+-- MAIN LOOP FUNCTION
+--=====================================================
+local function startMainLoop()
+    mainLoop = task.spawn(function()
+        print("[AUTO SMART] START")
+        StatusLabel.Text = "STATUS: RUNNING"
+        while running do
+            -- 1. Warp ke SmartUncle
+            warpToPos(WARP_POS)
+            task.wait(0.5)
+
+            -- 2. Click NPC + start quest
+            clickSmartUncle()
+            task.wait(0.5)
+            startQuest()
+            task.wait(1)
+
+            -- 3. Kill 3 boss berurutan
+            for _, name in ipairs(TARGET_NAMES) do
+                if not running then break end
+                local target = nil
+
+                -- tunggu target muncul (max 15 detik)
+                local t0 = tick()
+                repeat
+                    target = getTargetByName(name)
+                    task.wait(0.3)
+                until target or tick() - t0 > 15 or not running
+
+                if target and isTargetAlive(target) then
+                    attackComboOnTarget(target)
+                else
+                    print("[AUTO SMART] Target tidak ditemukan / sudah mati:", name)
+                end
+            end
+
+            -- 4. Balik ke SmartUncle, turn-in quest
+            if running then
+                warpToPos(WARP_POS)
+                task.wait(0.5)
+                clickSmartUncle()
+                task.wait(0.5)
+                finishQuest()
+            end
+
+            if running then
+                print("[AUTO SMART] Satu siklus selesai, ulang...")
+                task.wait(2)
+            end
+        end
+        print("[AUTO SMART] STOPPED")
+        StatusLabel.Text = "STATUS: STOPPED"
+    end)
+end
+
+--=====================================================
+-- TOGGLE BUTTON HANDLER
+--=====================================================
+ToggleButton.MouseButton1Click:Connect(function()
+    running = not running
+    
+    if running then
+        ToggleButton.Text = "ON"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(40, 167, 69)
+        StatusLabel.Text = "STATUS: STARTING..."
+        startMainLoop()
+    else
+        ToggleButton.Text = "OFF"
+        ToggleButton.BackgroundColor3 = Color3.fromRGB(220, 53, 69)
+        StatusLabel.Text = "STATUS: STOPPING..."
+        
+        -- Tunggu sebentar biar loop selesai
+        task.wait(1)
+        if mainLoop then
+            task.cancel(mainLoop)
+            mainLoop = nil
+        end
+    end
+end)
+
+print("[AUTO SMART] GUI Loaded - Click button to toggle!")
